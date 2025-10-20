@@ -1,6 +1,6 @@
 services:
   - type: worker
-    name: restricted-saver
+    name: telegram-fetcher
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
