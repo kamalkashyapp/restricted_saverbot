@@ -3,22 +3,52 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import SessionPasswordNeededError
 
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters
+)
+
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CLOUDFLARE_API = os.getenv("CLOUDFLARE_API")  # Worker URL
 
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
+# ===============================
+# Start command with inline button
+# ===============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("👋 Send /login to connect your account.")
+    keyboard = [
+        [InlineKeyboardButton("🔐 Login Now", callback_data="login_now")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "👋 Welcome to *Restricted Content Saver Bot*\n\n"
+        "Fetch messages, photos, videos, and files from private Telegram channels (even with forwarding restrictions).\n\n"
+        "Tap below to login 👇",
+        reply_markup=reply_markup,
+        parse_mode="Markdown"
+    )
 
-async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
-    await update.message.reply_text("📱 Please enter your phone number with country code (e.g. +919876543210):")
-    context.user_data["awaiting_phone"] = True
 
+# ===============================
+# Handle button presses
+# ===============================
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "login_now":
+        await query.message.reply_text(
+            "📱 Please enter your phone number with country code (e.g. +919876543210):"
+        )
+        context.user_data["awaiting_phone"] = True
+
+
+# ===============================
+# Handle login and messages
+# ===============================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text
@@ -30,8 +60,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         client = TelegramClient(StringSession(), API_ID, API_HASH)
         await client.connect()
-        sent = await client.send_code_request(phone)
-        context.user_data.update({"awaiting_phone": False, "awaiting_code": True, "phone": phone, "client": client})
+        await client.send_code_request(phone)
+        context.user_data.update({
+            "awaiting_phone": False,
+            "awaiting_code": True,
+            "phone": phone,
+            "client": client
+        })
         await update.message.reply_text("💬 Enter the code you received:")
         return
 
@@ -50,12 +85,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         session_str = client.session.save()
         await client.disconnect()
+
+        # Save to Cloudflare KV
         requests.post(f"{CLOUDFLARE_API}/save", json={"user_id": user_id, "session": session_str})
         await update.message.reply_text("✅ Logged in successfully! Now send any private post link.")
         context.user_data.clear()
         return
 
-    # Handle password for 2FA
+    # Handle 2FA password
     if context.user_data.get("awaiting_password"):
         password = text.strip()
         client = context.user_data["client"]
@@ -64,6 +101,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await client.sign_in(phone=phone, password=password)
         session_str = client.session.save()
         await client.disconnect()
+
         requests.post(f"{CLOUDFLARE_API}/save", json={"user_id": user_id, "session": session_str})
         await update.message.reply_text("✅ Logged in successfully!")
         context.user_data.clear()
@@ -73,7 +111,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "t.me/" in text:
         session_str = requests.post(f"{CLOUDFLARE_API}/get", json={"user_id": user_id}).text
         if "❌" in session_str:
-            await update.message.reply_text("⚠️ You must /login first.")
+            await update.message.reply_text("⚠️ You must login first using /start.")
             return
 
         client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
@@ -96,9 +134,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await client.disconnect()
 
 
+# ===============================
+# Run bot
+# ===============================
 app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("login", login))
+app.add_handler(CallbackQueryHandler(button_callback))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 if __name__ == "__main__":
