@@ -1,7 +1,6 @@
 services:
   - type: worker
-    name: telegram-fetcher
+    name: restricted-saver-multibot
     env: python
-    plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python main.py"
