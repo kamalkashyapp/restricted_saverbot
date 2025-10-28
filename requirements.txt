@@ -1,4 +1,3 @@
-python-telegram-bot==20.7
-telethon==1.28.0
-aiohttp
+telethon
 requests
+aiohttp
